@@ -1,9 +1,0 @@
-name = Commerce TaxCloud
-description = Interface between Drupal Commerce and TaxCloud service to retrieve tax rates
-package = Commerce (contrib)
-core = 7.x
-
-; Dependencies
-dependencies[] = libraries
-dependencies[] = commerce_shipping
-dependencies[] = commerce_tax
