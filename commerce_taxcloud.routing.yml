@@ -1,0 +1,7 @@
+commerce_taxcloud.config_settings:
+  path: '/admin/commerce/config/taxcloud'
+  defaults:
+    _form: 'Drupal\commerce_taxcloud\Form\ConfigSettingsForm'
+    _title: 'TaxCloud settings'
+  requirements:
+    _permission: 'administer commerce_taxcloud'

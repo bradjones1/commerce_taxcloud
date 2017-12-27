@@ -9,7 +9,10 @@ use Drupal\commerce_order\Entity\OrderItemInterface;
 use Drupal\commerce_price\RounderInterface;
 use Drupal\commerce_tax\Annotation\CommerceTaxType;
 use Drupal\commerce_tax\Plugin\Commerce\TaxType\TaxTypeBase;
+use Drupal\commerce_taxcloud\Events\CommerceTaxCloudEvents;
+use Drupal\commerce_taxcloud\Events\PrepareLookupDataEvent;
 use Drupal\Core\Annotation\Translation;
+use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\profile\Entity\ProfileInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -36,6 +39,13 @@ class TaxCloud extends TaxTypeBase {
   protected $rounder;
 
   /**
+   * The config.
+   *
+   * @var \Drupal\Core\Config\ImmutableConfig
+   */
+  protected $config;
+
+  /**
    * Constructs a new TaxTypeBase object.
    *
    * @param array $configuration
@@ -48,10 +58,15 @@ class TaxCloud extends TaxTypeBase {
    *   The entity type manager.
    * @param \Symfony\Component\EventDispatcher\EventDispatcherInterface $event_dispatcher
    *   The event dispatcher.
+   * @param \Drupal\commerce_price\RounderInterface $rounder
+   *   The rounder.
+   * @param \Drupal\Core\Config\ConfigFactoryInterface $configFactory
+   *   Config factory.
    */
-  public function __construct(array $configuration, $plugin_id, $plugin_definition, EntityTypeManagerInterface $entity_type_manager, EventDispatcherInterface $event_dispatcher, RounderInterface $rounder) {
+  public function __construct(array $configuration, $plugin_id, $plugin_definition, EntityTypeManagerInterface $entity_type_manager, EventDispatcherInterface $event_dispatcher, RounderInterface $rounder, ConfigFactoryInterface $configFactory) {
     parent::__construct($configuration, $plugin_id, $plugin_definition, $entity_type_manager, $event_dispatcher);
     $this->rounder = $rounder;
+    $this->config = $configFactory->get('commerce_taxcloud.settings');
   }
 
   /**
@@ -64,7 +79,8 @@ class TaxCloud extends TaxTypeBase {
       $plugin_definition,
       $container->get('entity_type.manager'),
       $container->get('event_dispatcher'),
-      $container->get('commerce_price.rounder')
+      $container->get('commerce_price.rounder'),
+      $container->get('config.factory')
     );
   }
 
@@ -96,12 +112,11 @@ class TaxCloud extends TaxTypeBase {
   protected function prepareTaxCloudItems(OrderInterface $order) {
     $items = [];
     foreach ($order->getItems() as $index => $item) {
-      // @todo - TIC configuration and tax-exclusive adjusted total price.
       $items[] = new CartItem(
         $index,
         $item->id(),
-        00000,
-        $item->getAdjustedTotalPrice(),
+        $this->config->get('tax_code'),
+        $item->getAdjustedTotalPrice()->getNumber(),
         $item->getQuantity()
       );
     }
@@ -124,15 +139,16 @@ class TaxCloud extends TaxTypeBase {
       ->get('address')->first();
     $request = new Client();
     $items = $this->prepareTaxCloudItems($order);
-    // @todo - Configurable api key.
+    $event = new PrepareLookupDataEvent($order, $items, $storeAddress, $destinationAddress);
+    $this->eventDispatcher->dispatch(CommerceTaxCloudEvents::PREPARE_LOOKUP_DATA, $event);
     $lookup = new Lookup(
-      'apikey',
-      'apikey',
-      'customerid',
-      $order->id(),
+      $this->config->get('api_id'),
+      $this->config->get('api_key'),
+      $this->config->get('account_id'),
+      $event->getOrder()->id(),
       $items,
-      $this->addressToTaxCloudAddress($storeAddress),
-      $this->addressToTaxCloudAddress($destinationAddress)
+      $this->addressToTaxCloudAddress($event->getOrigin()),
+      $this->addressToTaxCloudAddress($event->getDestination())
     );
     try {
       $response = $request->Lookup($lookup);
@@ -140,7 +156,7 @@ class TaxCloud extends TaxTypeBase {
     catch (LookupException $e) {
       // @todo - Log and fail.
     }
-    // @todo - Process response.
+    // Apply.
   }
 
   /**

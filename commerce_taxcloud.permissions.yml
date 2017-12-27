@@ -1,0 +1,4 @@
+'administer commerce_taxcloud':
+  title: 'Administer Commerce TaxCloud'
+  description: 'Administer TaxCloud settings.'
+  'restrict access': TRUE

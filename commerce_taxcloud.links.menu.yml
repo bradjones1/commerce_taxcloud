@@ -1,0 +1,5 @@
+commerce_taxcloud.config_settings:
+  title: 'TaxCloud settings'
+  route_name: 'commerce_taxcloud.config_settings'
+  parent: 'commerce.configuration'
+  description: 'Configure settings for Commerce TaxCloud.'

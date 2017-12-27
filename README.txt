@@ -1,30 +1,5 @@
+# Drupal Commerce TaxCloud integration
+
 The Commerce TaxCloud module enables your Drupal Commerce store to calculate
 appropriate tax rates for the line items in a shopping cart using TaxCloud's
 API.
-
--- REQUIREMENTS --
-
-PHP-TaxCloud library - https://github.com/VMdoh/php-taxcloud
-
-TaxCloud API ID and API Key.
-
-(optional) USPS API Key.
-
--- INSTALLATION --
-
-Install module as usual. See http://drupal.org/node/70151 for more information.
-
-PHP-TaxCloud library should be installed to sites/all/libraries if using the
-Libraries API. Alternatively, a composer.json file is included for use with
-Composer Manager.
-
--- CONFIGURATION --
-
-Configure basic settings at admin/commerce/config/taxes/taxcloud.
-
-Configure Taxability Information Codes per line item type at
-admin/commerce/config/taxes/taxcloud/line-items.
-
-You must also enable at least one of the capture actions and the return action
-to comply with TaxCloud's API usage policy. You may not use the service simply
-to perform lookups.
