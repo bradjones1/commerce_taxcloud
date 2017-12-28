@@ -133,20 +133,27 @@ class TaxCloud extends TaxTypeBase {
     }
     $prices_include_tax = $order->getStore()->get('prices_include_tax')->value;
     $storeAddress = $order->getStore()->getAddress();
-    /** @var \Drupal\address\Plugin\Field\FieldType\AddressItem $destinationAddress */
-    $destinationAddress = $this
-      ->resolveCustomerProfile($order->get('order_items')->first()->entity)
-      ->get('address')->first();
+    if ($customerProfile = $this->resolveCustomerProfile($order->getItems()[0])) {
+      /** @var \Drupal\address\Plugin\Field\FieldType\AddressItem $destinationAddress */
+      $destinationAddress = $customerProfile->get('address')->first();
+    }
+    else {
+      return;
+    }
     $request = new Client();
     $items = $this->prepareTaxCloudItems($order);
     $event = new PrepareLookupDataEvent($order, $items, $storeAddress, $destinationAddress);
     $this->eventDispatcher->dispatch(CommerceTaxCloudEvents::PREPARE_LOOKUP_DATA, $event);
+    // Allow subscribers to indicate no lookup should be performed.
+    if ($event->isPropagationStopped()) {
+      return;
+    }
     $lookup = new Lookup(
       $this->config->get('api_id'),
       $this->config->get('api_key'),
-      $this->config->get('account_id'),
-      $event->getOrder()->id(),
-      $items,
+      $order->getCustomerId(),
+      $order->id(),
+      $event->getItems(),
       $this->addressToTaxCloudAddress($event->getOrigin()),
       $this->addressToTaxCloudAddress($event->getDestination())
     );
@@ -156,7 +163,7 @@ class TaxCloud extends TaxTypeBase {
     catch (LookupException $e) {
       // @todo - Log and fail.
     }
-    // Apply.
+    // Response is the order ID with rates keyed by line item index.
   }
 
   /**

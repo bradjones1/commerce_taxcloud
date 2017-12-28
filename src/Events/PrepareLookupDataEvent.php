@@ -56,15 +56,6 @@ class PrepareLookupDataEvent extends Event {
   }
 
   /**
-   * Order setter.
-   *
-   * @param \Drupal\commerce_order\Entity\OrderInterface $order
-   */
-  public function setOrder(OrderInterface $order) {
-    $this->order = $order;
-  }
-
-  /**
    * Cart items getter.
    *
    * @return \TaxCloud\CartItem[]

@@ -38,13 +38,6 @@ class ConfigSettingsForm extends ConfigFormBase {
       '#title' => t('Configuration'),
       '#open' => TRUE,
     ];
-    $form['configuration']['account_id'] = [
-      '#type' => 'textfield',
-      '#title' => t('Account ID:'),
-      '#default_value' => $config->get('account_id'),
-      '#required' => TRUE,
-      '#description' => $this->t('The account ID to use when calculating taxes.'),
-    ];
     $form['configuration']['api_id'] = [
       '#type' => 'textfield',
       '#title' => t('API ID:'),
@@ -83,7 +76,6 @@ class ConfigSettingsForm extends ConfigFormBase {
   public function submitForm(array &$form, FormStateInterface $form_state) {
     $config = $this->config('commerce_taxcloud.settings');
     $config
-      ->set('account_id', $form_state->getValue('account_id'))
       ->set('api_id', $form_state->getValue('api_id'))
       ->set('api_key', $form_state->getValue('api_key'))
       ->set('tax_code', $form_state->getValue('tax_code'))
@@ -91,7 +83,7 @@ class ConfigSettingsForm extends ConfigFormBase {
     parent::submitForm($form, $form_state);
     $client = new Client();
     try {
-      $client->Ping(new Ping(
+      $result = $client->Ping(new Ping(
         $config->get('api_id'),
         $config->get('api_key')
       ));
