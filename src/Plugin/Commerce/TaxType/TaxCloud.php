@@ -3,6 +3,7 @@
 namespace Drupal\commerce_taxcloud\Plugin\Commerce\TaxType;
 
 use CommerceGuys\Addressing\AddressInterface;
+use CommerceGuys\Addressing\Subdivision\SubdivisionRepositoryInterface;
 use Drupal\commerce_order\Adjustment;
 use Drupal\commerce_order\Entity\OrderInterface;
 use Drupal\commerce_order\Entity\OrderItemInterface;
@@ -46,6 +47,13 @@ class TaxCloud extends TaxTypeBase {
   protected $config;
 
   /**
+   * The subdivision repository.
+   *
+   * @var \CommerceGuys\Addressing\Subdivision\SubdivisionRepositoryInterface
+   */
+  protected $subdivisionRepository;
+
+  /**
    * Constructs a new TaxTypeBase object.
    *
    * @param array $configuration
@@ -62,11 +70,23 @@ class TaxCloud extends TaxTypeBase {
    *   The rounder.
    * @param \Drupal\Core\Config\ConfigFactoryInterface $configFactory
    *   Config factory.
+   * @param \CommerceGuys\Addressing\Subdivision\SubdivisionRepositoryInterface $subdivision_repository
+   *   The subdivision repository.
    */
-  public function __construct(array $configuration, $plugin_id, $plugin_definition, EntityTypeManagerInterface $entity_type_manager, EventDispatcherInterface $event_dispatcher, RounderInterface $rounder, ConfigFactoryInterface $configFactory) {
+  public function __construct(
+    array $configuration,
+    $plugin_id,
+    $plugin_definition,
+    EntityTypeManagerInterface $entity_type_manager,
+    EventDispatcherInterface $event_dispatcher,
+    RounderInterface $rounder,
+    ConfigFactoryInterface $configFactory,
+    SubdivisionRepositoryInterface $subdivision_repository
+  ) {
     parent::__construct($configuration, $plugin_id, $plugin_definition, $entity_type_manager, $event_dispatcher);
     $this->rounder = $rounder;
     $this->config = $configFactory->get('commerce_taxcloud.settings');
+    $this->subdivisionRepository = $subdivision_repository;
   }
 
   /**
@@ -80,7 +100,8 @@ class TaxCloud extends TaxTypeBase {
       $container->get('entity_type.manager'),
       $container->get('event_dispatcher'),
       $container->get('commerce_price.rounder'),
-      $container->get('config.factory')
+      $container->get('config.factory'),
+      $container->get('address.subdivision_repository')
     );
   }
 
@@ -116,7 +137,7 @@ class TaxCloud extends TaxTypeBase {
         $index,
         $item->id(),
         $this->config->get('tax_code'),
-        $item->getAdjustedTotalPrice()->getNumber(),
+        $item->getUnitPrice()->getNumber(),
         $item->getQuantity()
       );
     }
@@ -127,12 +148,15 @@ class TaxCloud extends TaxTypeBase {
    * @inheritDoc
    */
   public function apply(OrderInterface $order) {
+    $store = $order->getStore();
+    $prices_include_tax = $store->get('prices_include_tax')->value;
+
     // @see https://dev.taxcloud.com/guides/getting-oriented-with-taxcloud
     if ($order->get('order_items')->isEmpty()) {
       return;
     }
-    $prices_include_tax = $order->getStore()->get('prices_include_tax')->value;
-    $storeAddress = $order->getStore()->getAddress();
+
+    $storeAddress = $store->getAddress();
     if ($customerProfile = $this->resolveCustomerProfile($order->getItems()[0])) {
       /** @var \Drupal\address\Plugin\Field\FieldType\AddressItem $destinationAddress */
       $destinationAddress = $customerProfile->get('address')->first();
@@ -158,12 +182,53 @@ class TaxCloud extends TaxTypeBase {
       $this->addressToTaxCloudAddress($event->getDestination())
     );
     try {
+      // Response is the order ID with rates keyed by line item index.
+      // @see https://api.taxcloud.net/1.0/taxcloud.asmx?op=Lookup
       $response = $request->Lookup($lookup);
+
+      foreach ($order->getItems() as $order_item_index => $order_item) {
+        if (isset($response[$order->id()][$order_item_index])) {
+          $unit_price = $order_item->getUnitPrice();
+          $percentage = $response[$order->id()][$order_item_index] / $order_item->getTotalPrice()
+              ->getNumber();
+          $percentage = (string) round($percentage, 3);
+          $order_item_tax_amount = $unit_price->multiply($percentage);
+          $order_item_tax_amount = $this->rounder->round($order_item_tax_amount);
+          $tax_source_id = [
+            $this->entityId,
+            $storeAddress->getAdministrativeArea(),
+            $storeAddress->getPostalCode(),
+            $destinationAddress->getAdministrativeArea(),
+            $destinationAddress->getPostalCode(),
+          ];
+
+          if ($prices_include_tax && !$this->isDisplayInclusive()) {
+            $unit_price = $unit_price->subtract($order_item_tax_amount);
+            $order_item->setUnitPrice($unit_price);
+          }
+          elseif (!$prices_include_tax && $this->isDisplayInclusive()) {
+            $unit_price = $unit_price->add($order_item_tax_amount);
+            $order_item->setUnitPrice($unit_price);
+          }
+
+          // Finds administrative area (state) full name.
+          $subdivision = \Drupal::service('address.subdivision_repository')
+            ->get($destinationAddress->getAdministrativeArea(), [$destinationAddress->getCountryCode()]);
+
+          $order_item->addAdjustment(new Adjustment([
+            'type' => 'tax',
+            'label' => $subdivision->getName() . ' Tax',
+            'amount' => $order_item_tax_amount,
+            'percentage' => $percentage,
+            'source_id' => implode('|', $tax_source_id),
+            'included' => $this->isDisplayInclusive(),
+          ]));
+        }
+      }
     }
     catch (LookupException $e) {
       // @todo - Log and fail.
     }
-    // Response is the order ID with rates keyed by line item index.
   }
 
   /**
@@ -171,7 +236,8 @@ class TaxCloud extends TaxTypeBase {
    *
    * @param \Drupal\profile\Entity\ProfileInterface $customer_profile
    * @param \Drupal\commerce_order\Entity\OrderItemInterface $order_item
-   * @param bool $prices_include_tax Whether order item prices should include tax.
+   * @param bool $prices_include_tax Whether order item prices should include
+   *   tax.
    *
    * @returns \Drupal\commerce_order\Adjustment[] The adjustments.
    */
