@@ -15,6 +15,7 @@ use Drupal\commerce_taxcloud\Events\PrepareLookupDataEvent;
 use Drupal\Core\Annotation\Translation;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\Core\Form\FormStateInterface;
 use Drupal\profile\Entity\ProfileInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\EventDispatcher\EventDispatcherInterface;
@@ -54,6 +55,20 @@ class TaxCloud extends TaxTypeBase {
   protected $subdivisionRepository;
 
   /**
+   * Default display label for tax row in checkout form.
+   *
+   * @var string
+   */
+  public $defaultDisplayLabel = 'SALES TAXES';
+
+  /**
+   * US states list.
+   *
+   * @var array
+   */
+  protected static $statesList;
+
+  /**
    * Constructs a new TaxTypeBase object.
    *
    * @param array $configuration
@@ -87,6 +102,12 @@ class TaxCloud extends TaxTypeBase {
     $this->rounder = $rounder;
     $this->config = $configFactory->get('commerce_taxcloud.settings');
     $this->subdivisionRepository = $subdivision_repository;
+
+    if (!isset(self::$statesList)) {
+      foreach ($this->subdivisionRepository->getAll(['US']) as $state) {
+        self::$statesList[$state->getCode()] = $state->getName();
+      }
+    }
   }
 
   /**
@@ -103,6 +124,54 @@ class TaxCloud extends TaxTypeBase {
       $container->get('config.factory'),
       $container->get('address.subdivision_repository')
     );
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function defaultConfiguration() {
+    return [
+        'display_label' => $this->defaultDisplayLabel,
+        'allowed_states' => [],
+      ] + parent::defaultConfiguration();
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function buildConfigurationForm(array $form, FormStateInterface $form_state) {
+    $form = parent::buildConfigurationForm($form, $form_state);
+
+    $form['display_label'] = [
+      '#type' => 'textfield',
+      '#title' => t('Display label'),
+      '#description' => t('Used to identify the applied tax in order summaries. Ex: "Tax", "VAT", "GST".'),
+      '#default_value' => $this->configuration['display_label'],
+    ];
+
+    $form['allowed_states'] = [
+      '#type' => 'select',
+      '#title' => t('Allowed States'),
+      '#description' => t('Allow tax calculation for selected states. If none is chosen then all are allowed.'),
+      '#options' => self::$statesList,
+      '#default_value' => $this->configuration['allowed_states'],
+      '#multiple' => TRUE,
+    ];
+
+    return $form;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function submitConfigurationForm(array &$form, FormStateInterface $form_state) {
+    parent::submitConfigurationForm($form, $form_state);
+
+    if (!$form_state->getErrors()) {
+      $values = $form_state->getValue($form['#parents']);
+      $this->configuration['display_label'] = $values['display_label'];
+      $this->configuration['allowed_states'] = $values['allowed_states'];
+    }
   }
 
   /**
@@ -160,6 +229,10 @@ class TaxCloud extends TaxTypeBase {
     if ($customerProfile = $this->resolveCustomerProfile($order->getItems()[0])) {
       /** @var \Drupal\address\Plugin\Field\FieldType\AddressItem $destinationAddress */
       $destinationAddress = $customerProfile->get('address')->first();
+
+      if (!$this->assertDestinationAddress($destinationAddress)) {
+        return;
+      }
     }
     else {
       return;
@@ -211,13 +284,9 @@ class TaxCloud extends TaxTypeBase {
             $order_item->setUnitPrice($unit_price);
           }
 
-          // Finds administrative area (state) full name.
-          $subdivision = \Drupal::service('address.subdivision_repository')
-            ->get($destinationAddress->getAdministrativeArea(), [$destinationAddress->getCountryCode()]);
-
           $order_item->addAdjustment(new Adjustment([
             'type' => 'tax',
-            'label' => $subdivision->getName() . ' Tax',
+            'label' => $this->getDisplayLabel(),
             'amount' => $order_item_tax_amount,
             'percentage' => $percentage,
             'source_id' => implode('|', $tax_source_id),
@@ -229,6 +298,29 @@ class TaxCloud extends TaxTypeBase {
     catch (LookupException $e) {
       // @todo - Log and fail.
     }
+  }
+
+  /**
+   * Gets the configured display label.
+   *
+   * @return string
+   *   The configured display label.
+   */
+  protected function getDisplayLabel() {
+    return isset($this->configuration['display_label']) ? $this->configuration['display_label'] : $this->defaultDisplayLabel;
+  }
+
+  /**
+   * Check if it needs to calculate tax.
+   *
+   * @param \CommerceGuys\Addressing\AddressInterface $destinationAddress
+   *   Order destination address.
+   *
+   * @return bool
+   *   TRUE - tax needs to be calculated.
+   */
+  protected function assertDestinationAddress(AddressInterface $destinationAddress) {
+    return empty($this->configuration['allowed_states']) || in_array($destinationAddress->getAdministrativeArea(), $this->configuration['allowed_states']);
   }
 
   /**
