@@ -206,7 +206,7 @@ class TaxCloud extends TaxTypeBase {
         $index,
         $item->id(),
         $this->config->get('tax_code'),
-        $item->getUnitPrice()->getNumber(),
+        $item->getAdjustedUnitPrice()->getNumber(),
         $item->getQuantity()
       );
     }
@@ -262,8 +262,7 @@ class TaxCloud extends TaxTypeBase {
       foreach ($order->getItems() as $order_item_index => $order_item) {
         if (isset($response[$order->id()][$order_item_index])) {
           $unit_price = $order_item->getUnitPrice();
-          $percentage = $response[$order->id()][$order_item_index] / $order_item->getTotalPrice()
-              ->getNumber();
+          $percentage = $response[$order->id()][$order_item_index] / $order_item->getAdjustedTotalPrice()->getNumber();
           $percentage = (string) round($percentage, 3);
           $order_item_tax_amount = $unit_price->multiply($percentage);
           $order_item_tax_amount = $this->rounder->round($order_item_tax_amount);
