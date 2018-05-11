@@ -31,7 +31,7 @@ use TaxCloud\Request\Lookup;
  *   label = @Translation("TaxCloud"),
  * )
  */
-class TaxCloud extends TaxTypeBase {
+class TaxCloud extends TaxTypeBase implements TaxCloudInterface {
 
   /**
    * The rounder.
@@ -133,6 +133,7 @@ class TaxCloud extends TaxTypeBase {
     return [
         'display_label' => $this->defaultDisplayLabel,
         'allowed_states' => [],
+        'round_tax_amount' => TRUE,
       ] + parent::defaultConfiguration();
   }
 
@@ -158,6 +159,12 @@ class TaxCloud extends TaxTypeBase {
       '#multiple' => TRUE,
     ];
 
+    $form['round_tax_amount'] = [
+      '#type' => 'checkbox',
+      '#title' => t('Round tax amount'),
+      '#default_value' => $this->configuration['round_tax_amount'],
+    ];
+
     return $form;
   }
 
@@ -171,6 +178,7 @@ class TaxCloud extends TaxTypeBase {
       $values = $form_state->getValue($form['#parents']);
       $this->configuration['display_label'] = $values['display_label'];
       $this->configuration['allowed_states'] = $values['allowed_states'];
+      $this->configuration['round_tax_amount'] = $values['round_tax_amount'];
     }
   }
 
@@ -261,11 +269,14 @@ class TaxCloud extends TaxTypeBase {
 
       foreach ($order->getItems() as $order_item_index => $order_item) {
         if (isset($response[$order->id()][$order_item_index])) {
-          $unit_price = $order_item->getUnitPrice();
           $percentage = $response[$order->id()][$order_item_index] / $order_item->getAdjustedTotalPrice()->getNumber();
           $percentage = (string) round($percentage, 3);
-          $order_item_tax_amount = $unit_price->multiply($percentage);
-          $order_item_tax_amount = $this->rounder->round($order_item_tax_amount);
+          $order_item_tax_amount = $order_item->getAdjustedUnitPrice()->multiply($percentage);
+
+          if ($this->shouldRound()) {
+            $order_item_tax_amount = $this->rounder->round($order_item_tax_amount);
+          }
+
           $tax_source_id = [
             $this->entityId,
             $storeAddress->getAdministrativeArea(),
@@ -274,6 +285,7 @@ class TaxCloud extends TaxTypeBase {
             $destinationAddress->getPostalCode(),
           ];
 
+          $unit_price = $order_item->getUnitPrice();
           if ($prices_include_tax && !$this->isDisplayInclusive()) {
             $unit_price = $unit_price->subtract($order_item_tax_amount);
             $order_item->setUnitPrice($unit_price);
@@ -373,6 +385,13 @@ class TaxCloud extends TaxTypeBase {
     foreach ($this->getAdjustments($customer_profile, $order_item, $prices_include_tax) as $adjustment) {
       $order_item->addAdjustment($adjustment);
     }
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function shouldRound() {
+    return $this->configuration['round_tax_amount'];
   }
 
 }
