@@ -31,7 +31,7 @@ use TaxCloud\Request\Lookup;
  *   label = @Translation("TaxCloud"),
  * )
  */
-class TaxCloud extends TaxTypeBase {
+class TaxCloud extends TaxTypeBase implements TaxCloudInterface {
 
   /**
    * The rounder.
@@ -271,6 +271,7 @@ class TaxCloud extends TaxTypeBase {
         if (isset($response[$order->id()][$order_item_index])) {
           $percentage = $response[$order->id()][$order_item_index] / $order_item->getAdjustedTotalPrice()->getNumber();
           $percentage = (string) round($percentage, 3);
+//          die(var_dump($order_item->getAdjustments()) . var_dump($order_item->getAdjustedUnitPrice()) . var_dump($order_item->getAdjustedUnitPrice()->multiply($percentage)));
           $order_item_tax_amount = $order_item->getAdjustedUnitPrice()->multiply($percentage);
 
           if ($this->shouldRound()) {
@@ -388,10 +389,7 @@ class TaxCloud extends TaxTypeBase {
   }
 
   /**
-   * Returns whether should the tax amount be rounded or no.
-   *
-   * @return bool
-   *   Whether should the tax amount be rounded or no.
+   * {@inheritdoc}
    */
   public function shouldRound() {
     return $this->configuration['round_tax_amount'];
