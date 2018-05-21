@@ -268,7 +268,7 @@ class TaxCloud extends TaxTypeBase implements TaxCloudInterface {
       $response = $request->Lookup($lookup);
 
       foreach ($order->getItems() as $order_item_index => $order_item) {
-        if (isset($response[$order->id()][$order_item_index])) {
+        if (!empty($response[$order->id()][$order_item_index])) {
           $percentage = $response[$order->id()][$order_item_index] / $order_item->getAdjustedTotalPrice()->getNumber();
           $percentage = (string) round($percentage, 3);
           $order_item_tax_amount = $order_item->getAdjustedUnitPrice()->multiply($percentage);
