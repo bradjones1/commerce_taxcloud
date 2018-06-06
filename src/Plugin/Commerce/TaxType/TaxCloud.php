@@ -222,6 +222,13 @@ class TaxCloud extends TaxTypeBase implements TaxCloudInterface {
   }
 
   /**
+   * {@inheritdoc}
+   */
+  public function applies(OrderInterface $order) {
+    return empty($order->getItems()[0]) ? FALSE : parent::applies($order);
+  }
+
+  /**
    * @inheritDoc
    */
   public function apply(OrderInterface $order) {
