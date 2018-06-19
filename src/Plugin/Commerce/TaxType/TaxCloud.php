@@ -235,13 +235,15 @@ class TaxCloud extends TaxTypeBase implements TaxCloudInterface {
     $store = $order->getStore();
     $prices_include_tax = $store->get('prices_include_tax')->value;
 
+    $order_items = $order->getItems();
+
     // @see https://dev.taxcloud.com/guides/getting-oriented-with-taxcloud
-    if ($order->get('order_items')->isEmpty()) {
+    if (empty($order_items[0])) {
       return;
     }
 
     $storeAddress = $store->getAddress();
-    if ($customerProfile = $this->resolveCustomerProfile($order->getItems()[0])) {
+    if ($customerProfile = $this->resolveCustomerProfile($order_items[0])) {
       /** @var \Drupal\address\Plugin\Field\FieldType\AddressItem $destinationAddress */
       $destinationAddress = $customerProfile->get('address')->first();
 
