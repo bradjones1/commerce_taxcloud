@@ -4,4 +4,4 @@ description: Interface between Drupal Commerce and TaxCloud service to retrieve 
 package: Commerce (contrib)
 core: '8.x'
 dependencies:
-  - commerce:commerce_tax
+  - commerce:commerce_tax (>= 2.8)

@@ -7,6 +7,7 @@ use CommerceGuys\Addressing\Subdivision\SubdivisionRepositoryInterface;
 use Drupal\commerce_order\Adjustment;
 use Drupal\commerce_order\Entity\OrderInterface;
 use Drupal\commerce_order\Entity\OrderItemInterface;
+use Drupal\commerce_price\Price;
 use Drupal\commerce_price\RounderInterface;
 use Drupal\commerce_tax\Annotation\CommerceTaxType;
 use Drupal\commerce_tax\Plugin\Commerce\TaxType\TaxTypeBase;
@@ -278,7 +279,8 @@ class TaxCloud extends TaxTypeBase implements TaxCloudInterface {
 
       foreach ($order->getItems() as $order_item_index => $order_item) {
         if (!empty($response[$order->id()][$order_item_index])) {
-          $percentage = $response[$order->id()][$order_item_index] / $order_item->getAdjustedTotalPrice()->getNumber();
+          $order_item_total_tax_amount = $response[$order->id()][$order_item_index];
+          $percentage = $order_item_total_tax_amount / $order_item->getAdjustedTotalPrice()->getNumber();
           $percentage = (string) round($percentage, 3);
           $order_item_tax_amount = $order_item->getAdjustedUnitPrice()->multiply($percentage);
 
@@ -307,7 +309,9 @@ class TaxCloud extends TaxTypeBase implements TaxCloudInterface {
           $order_item->addAdjustment(new Adjustment([
             'type' => 'tax',
             'label' => $this->getDisplayLabel(),
-            'amount' => $order_item_tax_amount,
+            // New in Commerce 2.8: order item adjustment amount is now per
+            // order item *total* price and not per unit price.
+            'amount' => new Price((string) $order_item_total_tax_amount, $order_item->getAdjustedTotalPrice()->getCurrencyCode()),
             'percentage' => $percentage,
             'source_id' => implode('|', $tax_source_id),
             'included' => $this->isDisplayInclusive(),
