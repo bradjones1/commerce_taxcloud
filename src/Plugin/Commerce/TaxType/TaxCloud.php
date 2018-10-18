@@ -279,13 +279,16 @@ class TaxCloud extends TaxTypeBase implements TaxCloudInterface {
 
       foreach ($order->getItems() as $order_item_index => $order_item) {
         if (!empty($response[$order->id()][$order_item_index])) {
-          $order_item_total_tax_amount = $response[$order->id()][$order_item_index];
-          $percentage = $order_item_total_tax_amount / $order_item->getAdjustedTotalPrice()->getNumber();
+          $order_item_total_tax_amount_rounded = $response[$order->id()][$order_item_index];
+          $percentage = $order_item_total_tax_amount_rounded / $order_item->getAdjustedTotalPrice()->getNumber();
           $percentage = (string) round($percentage, 3);
+
+          $order_item_total_tax_amount = $order_item->getAdjustedTotalPrice()->multiply($percentage);
           $order_item_tax_amount = $order_item->getAdjustedUnitPrice()->multiply($percentage);
 
           if ($this->shouldRound()) {
-            $order_item_tax_amount = $this->rounder->round($order_item_tax_amount);
+            // Round tax amount with local rounder.
+            $order_item_total_tax_amount = $this->rounder->round($order_item_total_tax_amount);
           }
 
           $tax_source_id = [
@@ -311,7 +314,7 @@ class TaxCloud extends TaxTypeBase implements TaxCloudInterface {
             'label' => $this->getDisplayLabel(),
             // New in Commerce 2.8: order item adjustment amount is now per
             // order item *total* price and not per unit price.
-            'amount' => new Price((string) $order_item_total_tax_amount, $order_item->getAdjustedTotalPrice()->getCurrencyCode()),
+            'amount' => $order_item_total_tax_amount,
             'percentage' => $percentage,
             'source_id' => implode('|', $tax_source_id),
             'included' => $this->isDisplayInclusive(),
