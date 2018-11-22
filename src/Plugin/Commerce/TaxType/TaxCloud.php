@@ -277,6 +277,8 @@ class TaxCloud extends TaxTypeBase implements TaxCloudInterface {
       // @see https://api.taxcloud.net/1.0/taxcloud.asmx?op=Lookup
       $response = $request->Lookup($lookup);
 
+      $rounding_method = $this->config->get('tax_rounding_method');
+
       foreach ($order->getItems() as $order_item_index => $order_item) {
         if (!empty($response[$order->id()][$order_item_index])) {
           $order_item_total_tax_amount_rounded = $response[$order->id()][$order_item_index];
@@ -286,7 +288,7 @@ class TaxCloud extends TaxTypeBase implements TaxCloudInterface {
           $order_item_total_tax_amount = $order_item->getAdjustedTotalPrice()->multiply($percentage);
           $order_item_tax_amount = $order_item->getAdjustedUnitPrice()->multiply($percentage);
 
-          if ($this->shouldRound()) {
+          if ($this->shouldRound() || $rounding_method == 'per_line') {
             // Round tax amount with local rounder.
             $order_item_total_tax_amount = $this->rounder->round($order_item_total_tax_amount);
           }
