@@ -35,6 +35,20 @@ use TaxCloud\Request\Lookup;
 class TaxCloud extends TaxTypeBase implements TaxCloudInterface {
 
   /**
+   * Rounding method per line.
+   *
+   * @var string
+   */
+  const ROUNDING_PER_LINE = 'per_line';
+
+  /**
+   * Rounding method globally.
+   *
+   * @var string
+   */
+  const ROUNDING_GLOBALLY = 'globally';
+
+  /**
    * The rounder.
    *
    * @var \Drupal\commerce_price\RounderInterface
@@ -61,6 +75,13 @@ class TaxCloud extends TaxTypeBase implements TaxCloudInterface {
    * @var string
    */
   public $defaultDisplayLabel = 'SALES TAXES';
+
+  /**
+   * Default rounding method for tax.
+   *
+   * @var string
+   */
+  public $defaultRoundingMethod = self::ROUNDING_GLOBALLY;
 
   /**
    * US states list.
@@ -132,10 +153,10 @@ class TaxCloud extends TaxTypeBase implements TaxCloudInterface {
    */
   public function defaultConfiguration() {
     return [
-        'display_label' => $this->defaultDisplayLabel,
-        'allowed_states' => [],
-        'round_tax_amount' => TRUE,
-      ] + parent::defaultConfiguration();
+      'display_label' => $this->defaultDisplayLabel,
+      'allowed_states' => [],
+      'tax_rounding_method' => $this->defaultRoundingMethod,
+    ] + parent::defaultConfiguration();
   }
 
   /**
@@ -160,10 +181,16 @@ class TaxCloud extends TaxTypeBase implements TaxCloudInterface {
       '#multiple' => TRUE,
     ];
 
-    $form['round_tax_amount'] = [
-      '#type' => 'checkbox',
-      '#title' => t('Round tax amount'),
-      '#default_value' => $this->configuration['round_tax_amount'],
+    $form['tax_rounding_method'] = [
+      '#type' => 'radios',
+      '#title' => t('Rounding method'),
+      '#default_value' => $this->configuration['tax_rounding_method'],
+      '#options' => [
+        self::ROUNDING_PER_LINE => t('Round per Line'),
+        self::ROUNDING_GLOBALLY => t('Round Globally'),
+      ],
+      '#required' => TRUE,
+      '#description' => t('How total tax amount is computed in orders.'),
     ];
 
     return $form;
@@ -179,7 +206,7 @@ class TaxCloud extends TaxTypeBase implements TaxCloudInterface {
       $values = $form_state->getValue($form['#parents']);
       $this->configuration['display_label'] = $values['display_label'];
       $this->configuration['allowed_states'] = $values['allowed_states'];
-      $this->configuration['round_tax_amount'] = $values['round_tax_amount'];
+      $this->configuration['tax_rounding_method'] = $values['tax_rounding_method'];
     }
   }
 
@@ -407,7 +434,7 @@ class TaxCloud extends TaxTypeBase implements TaxCloudInterface {
    * {@inheritdoc}
    */
   public function shouldRound() {
-    return $this->configuration['round_tax_amount'];
+    return $this->configuration['tax_rounding_method'] == self::ROUNDING_PER_LINE;
   }
 
 }
