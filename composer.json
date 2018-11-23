@@ -4,6 +4,7 @@
   "description": "The Commerce TaxCloud module enables your Drupal Commerce store to calculate appropriate tax rates for the line items in a shopping cart using TaxCloud's API.",
   "license": "GPL-2.0+",
   "require": {
-    "bporcelli/php-taxcloud": "^0.2"
+    "bporcelli/php-taxcloud": "^0.2",
+    "drupal/commerce": "^2.8"
   }
 }

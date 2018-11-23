@@ -3,9 +3,11 @@
 namespace Drupal\commerce_taxcloud\Plugin\Commerce\TaxType;
 
 use CommerceGuys\Addressing\AddressInterface;
+use CommerceGuys\Addressing\Subdivision\SubdivisionRepositoryInterface;
 use Drupal\commerce_order\Adjustment;
 use Drupal\commerce_order\Entity\OrderInterface;
 use Drupal\commerce_order\Entity\OrderItemInterface;
+use Drupal\commerce_price\Price;
 use Drupal\commerce_price\RounderInterface;
 use Drupal\commerce_tax\Annotation\CommerceTaxType;
 use Drupal\commerce_tax\Plugin\Commerce\TaxType\TaxTypeBase;
@@ -14,6 +16,7 @@ use Drupal\commerce_taxcloud\Events\PrepareLookupDataEvent;
 use Drupal\Core\Annotation\Translation;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\Core\Form\FormStateInterface;
 use Drupal\profile\Entity\ProfileInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\EventDispatcher\EventDispatcherInterface;
@@ -29,7 +32,21 @@ use TaxCloud\Request\Lookup;
  *   label = @Translation("TaxCloud"),
  * )
  */
-class TaxCloud extends TaxTypeBase {
+class TaxCloud extends TaxTypeBase implements TaxCloudInterface {
+
+  /**
+   * Rounding method per line.
+   *
+   * @var string
+   */
+  const ROUNDING_PER_LINE = 'per_line';
+
+  /**
+   * Rounding method globally.
+   *
+   * @var string
+   */
+  const ROUNDING_GLOBALLY = 'globally';
 
   /**
    * The rounder.
@@ -44,6 +61,34 @@ class TaxCloud extends TaxTypeBase {
    * @var \Drupal\Core\Config\ImmutableConfig
    */
   protected $config;
+
+  /**
+   * The subdivision repository.
+   *
+   * @var \CommerceGuys\Addressing\Subdivision\SubdivisionRepositoryInterface
+   */
+  protected $subdivisionRepository;
+
+  /**
+   * Default display label for tax row in checkout form.
+   *
+   * @var string
+   */
+  public $defaultDisplayLabel = 'SALES TAXES';
+
+  /**
+   * Default rounding method for tax.
+   *
+   * @var string
+   */
+  public $defaultRoundingMethod = self::ROUNDING_GLOBALLY;
+
+  /**
+   * US states list.
+   *
+   * @var array
+   */
+  protected static $statesList;
 
   /**
    * Constructs a new TaxTypeBase object.
@@ -62,11 +107,29 @@ class TaxCloud extends TaxTypeBase {
    *   The rounder.
    * @param \Drupal\Core\Config\ConfigFactoryInterface $configFactory
    *   Config factory.
+   * @param \CommerceGuys\Addressing\Subdivision\SubdivisionRepositoryInterface $subdivision_repository
+   *   The subdivision repository.
    */
-  public function __construct(array $configuration, $plugin_id, $plugin_definition, EntityTypeManagerInterface $entity_type_manager, EventDispatcherInterface $event_dispatcher, RounderInterface $rounder, ConfigFactoryInterface $configFactory) {
+  public function __construct(
+    array $configuration,
+    $plugin_id,
+    $plugin_definition,
+    EntityTypeManagerInterface $entity_type_manager,
+    EventDispatcherInterface $event_dispatcher,
+    RounderInterface $rounder,
+    ConfigFactoryInterface $configFactory,
+    SubdivisionRepositoryInterface $subdivision_repository
+  ) {
     parent::__construct($configuration, $plugin_id, $plugin_definition, $entity_type_manager, $event_dispatcher);
     $this->rounder = $rounder;
     $this->config = $configFactory->get('commerce_taxcloud.settings');
+    $this->subdivisionRepository = $subdivision_repository;
+
+    if (!isset(self::$statesList)) {
+      foreach ($this->subdivisionRepository->getAll(['US']) as $state) {
+        self::$statesList[$state->getCode()] = $state->getName();
+      }
+    }
   }
 
   /**
@@ -80,8 +143,71 @@ class TaxCloud extends TaxTypeBase {
       $container->get('entity_type.manager'),
       $container->get('event_dispatcher'),
       $container->get('commerce_price.rounder'),
-      $container->get('config.factory')
+      $container->get('config.factory'),
+      $container->get('address.subdivision_repository')
     );
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function defaultConfiguration() {
+    return [
+      'display_label' => $this->defaultDisplayLabel,
+      'allowed_states' => [],
+      'tax_rounding_method' => $this->defaultRoundingMethod,
+    ] + parent::defaultConfiguration();
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function buildConfigurationForm(array $form, FormStateInterface $form_state) {
+    $form = parent::buildConfigurationForm($form, $form_state);
+
+    $form['display_label'] = [
+      '#type' => 'textfield',
+      '#title' => t('Display label'),
+      '#description' => t('Used to identify the applied tax in order summaries. Ex: "Tax", "VAT", "GST".'),
+      '#default_value' => $this->configuration['display_label'],
+    ];
+
+    $form['allowed_states'] = [
+      '#type' => 'select',
+      '#title' => t('Allowed States'),
+      '#description' => t('Allow tax calculation for selected states. If none is chosen then all are allowed.'),
+      '#options' => self::$statesList,
+      '#default_value' => $this->configuration['allowed_states'],
+      '#multiple' => TRUE,
+    ];
+
+    $form['tax_rounding_method'] = [
+      '#type' => 'radios',
+      '#title' => t('Rounding method'),
+      '#default_value' => $this->configuration['tax_rounding_method'],
+      '#options' => [
+        self::ROUNDING_PER_LINE => t('Round per Line'),
+        self::ROUNDING_GLOBALLY => t('Round Globally'),
+      ],
+      '#required' => TRUE,
+      '#description' => t('How total tax amount is computed in orders.'),
+    ];
+
+    return $form;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function submitConfigurationForm(array &$form, FormStateInterface $form_state) {
+    parent::submitConfigurationForm($form, $form_state);
+
+    if (!$form_state->getErrors()) {
+      $values = $form_state->getValue($form['#parents']);
+      $this->configuration['display_label'] = $values['display_label'];
+      $this->configuration['allowed_states'] = $values['allowed_states'];
+      $this->configuration['tax_rounding_method'] = $values['tax_rounding_method'];
+    }
   }
 
   /**
@@ -116,7 +242,7 @@ class TaxCloud extends TaxTypeBase {
         $index,
         $item->id(),
         $this->config->get('tax_code'),
-        $item->getAdjustedTotalPrice()->getNumber(),
+        $item->getAdjustedUnitPrice()->getNumber(),
         $item->getQuantity()
       );
     }
@@ -124,18 +250,34 @@ class TaxCloud extends TaxTypeBase {
   }
 
   /**
+   * {@inheritdoc}
+   */
+  public function applies(OrderInterface $order) {
+    return empty($order->getItems()[0]) ? FALSE : parent::applies($order);
+  }
+
+  /**
    * @inheritDoc
    */
   public function apply(OrderInterface $order) {
+    $store = $order->getStore();
+    $prices_include_tax = $store->get('prices_include_tax')->value;
+
+    $order_items = $order->getItems();
+
     // @see https://dev.taxcloud.com/guides/getting-oriented-with-taxcloud
-    if ($order->get('order_items')->isEmpty()) {
+    if (empty($order_items[0])) {
       return;
     }
-    $prices_include_tax = $order->getStore()->get('prices_include_tax')->value;
-    $storeAddress = $order->getStore()->getAddress();
-    if ($customerProfile = $this->resolveCustomerProfile($order->getItems()[0])) {
+
+    $storeAddress = $store->getAddress();
+    if ($customerProfile = $this->resolveCustomerProfile($order_items[0])) {
       /** @var \Drupal\address\Plugin\Field\FieldType\AddressItem $destinationAddress */
       $destinationAddress = $customerProfile->get('address')->first();
+
+      if (!$this->assertDestinationAddress($destinationAddress)) {
+        return;
+      }
     }
     else {
       return;
@@ -158,12 +300,81 @@ class TaxCloud extends TaxTypeBase {
       $this->addressToTaxCloudAddress($event->getDestination())
     );
     try {
+      // Response is the order ID with rates keyed by line item index.
+      // @see https://api.taxcloud.net/1.0/taxcloud.asmx?op=Lookup
       $response = $request->Lookup($lookup);
+
+      foreach ($order->getItems() as $order_item_index => $order_item) {
+        if (!empty($response[$order->id()][$order_item_index])) {
+          $order_item_total_tax_amount_rounded = $response[$order->id()][$order_item_index];
+          $percentage = $order_item_total_tax_amount_rounded / $order_item->getAdjustedTotalPrice()->getNumber();
+          $percentage = (string) round($percentage, 3);
+
+          $order_item_total_tax_amount = $order_item->getAdjustedTotalPrice()->multiply($percentage);
+          $order_item_tax_amount = $order_item->getAdjustedUnitPrice()->multiply($percentage);
+
+          if ($this->shouldRound()) {
+            // Round tax amount with local rounder.
+            $order_item_total_tax_amount = $this->rounder->round($order_item_total_tax_amount);
+          }
+
+          $tax_source_id = [
+            $this->entityId,
+            $storeAddress->getAdministrativeArea(),
+            $storeAddress->getPostalCode(),
+            $destinationAddress->getAdministrativeArea(),
+            $destinationAddress->getPostalCode(),
+          ];
+
+          $unit_price = $order_item->getUnitPrice();
+          if ($prices_include_tax && !$this->isDisplayInclusive()) {
+            $unit_price = $unit_price->subtract($order_item_tax_amount);
+            $order_item->setUnitPrice($unit_price);
+          }
+          elseif (!$prices_include_tax && $this->isDisplayInclusive()) {
+            $unit_price = $unit_price->add($order_item_tax_amount);
+            $order_item->setUnitPrice($unit_price);
+          }
+
+          $order_item->addAdjustment(new Adjustment([
+            'type' => 'tax',
+            'label' => $this->getDisplayLabel(),
+            // New in Commerce 2.8: order item adjustment amount is now per
+            // order item *total* price and not per unit price.
+            'amount' => $order_item_total_tax_amount,
+            'percentage' => $percentage,
+            'source_id' => implode('|', $tax_source_id),
+            'included' => $this->isDisplayInclusive(),
+          ]));
+        }
+      }
     }
     catch (LookupException $e) {
       // @todo - Log and fail.
     }
-    // Response is the order ID with rates keyed by line item index.
+  }
+
+  /**
+   * Gets the configured display label.
+   *
+   * @return string
+   *   The configured display label.
+   */
+  protected function getDisplayLabel() {
+    return isset($this->configuration['display_label']) ? $this->configuration['display_label'] : $this->defaultDisplayLabel;
+  }
+
+  /**
+   * Check if it needs to calculate tax.
+   *
+   * @param \CommerceGuys\Addressing\AddressInterface $destinationAddress
+   *   Order destination address.
+   *
+   * @return bool
+   *   TRUE - tax needs to be calculated.
+   */
+  protected function assertDestinationAddress(AddressInterface $destinationAddress) {
+    return empty($this->configuration['allowed_states']) || in_array($destinationAddress->getAdministrativeArea(), $this->configuration['allowed_states']);
   }
 
   /**
@@ -171,7 +382,8 @@ class TaxCloud extends TaxTypeBase {
    *
    * @param \Drupal\profile\Entity\ProfileInterface $customer_profile
    * @param \Drupal\commerce_order\Entity\OrderItemInterface $order_item
-   * @param bool $prices_include_tax Whether order item prices should include tax.
+   * @param bool $prices_include_tax Whether order item prices should include
+   *   tax.
    *
    * @returns \Drupal\commerce_order\Adjustment[] The adjustments.
    */
@@ -216,6 +428,13 @@ class TaxCloud extends TaxTypeBase {
     foreach ($this->getAdjustments($customer_profile, $order_item, $prices_include_tax) as $adjustment) {
       $order_item->addAdjustment($adjustment);
     }
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function shouldRound() {
+    return $this->configuration['tax_rounding_method'] == self::ROUNDING_PER_LINE;
   }
 
 }
